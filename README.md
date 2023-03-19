@@ -47,5 +47,6 @@ $ cd Projects
 ```html
 http://localhost:1337/api/users/add
 http://localhost:1337/api/users
+http://localhost:1337/redis/redis?completed=false
 ```
 
