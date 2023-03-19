@@ -1,15 +1,10 @@
 const express = require('express');
+const axios = require('axios');
+const redis = require('redis');
 
 const router = express.Router();
 
 const {User} = require('../models/user');
-
-const appDao = require('../models/app');
-
-const resp = function (res, data, code, next) {
-    res.status(code).json(data);
-    return next();
-};
 
 // Mongo DB
 
@@ -39,37 +34,50 @@ router.post('/mongo/api/users/add', (req, res) =>{
 })
 
 // Redis
-router.post('/redis/user/add', function (req, res, next) {
+// Initiate and connect to the Redis client
+const redisClient = redis.createClient({
+    url: `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
+    password: `${process.env.REDIS_PASSWORD}` });
+(async () => {
+    redisClient.on("error", (error) => console.error(`Ups : ${error}`));
+    await redisClient.connect();
+})();
+async function fetchToDos(completed) {
+    const cacheKey = `TODOS2_${completed}`;
 
-    const body = req.body;
+    // First attempt to retrieve data from the cache
+    try {
+        const cachedResult = await redisClient.get(cacheKey);
+        if (cachedResult) {
+            console.log('Data from cache.');
+            return cachedResult;
+        }
+    } catch (error) {
+        console.error('Something happened to Redis', error);
+    }
 
-    appDao.add_user(body, function (response, code) {
-        resp(res, response, code, next)
-    })
+    // If the cache is empty or we fail reading it, default back to the API
+    const apiResponse = await axios(`https://jsonplaceholder.typicode.com/todos?completed=${completed}`);
+    console.log('Data requested from the ToDo API.');
 
-});
-router.get('/redis/user/:id', function (req, res, next) {
-    const param = req.params;
+    // Finally, if you got any results, save the data back to the cache
+    if (apiResponse.data.length > 0) {
+        try {
+            await redisClient.set(
+                cacheKey,
+                JSON.stringify(apiResponse.data),
+                { EX: 10 }
+            );
+        } catch (error) {
+            console.error('Something happened to Redis', error);
+        }
+    }
 
-    appDao.get_user(param, function (response, code) {
-        resp(res, response, code, next)
-    })
-});
-router.put('/redis/user/:id', function (req, res, next) {
-    const id = req.params.id;
-    const param = req.body;
+    return apiResponse.data;
+}
 
-    appDao.update_user(id, param, function (response, code) {
-        resp(res, response, code, next)
-    })
-
-});
-router.delete('/redis/user/:id', function (req, res, next) {
-    const param = req.params;
-
-    appDao.delete_user(param, function (response, code) {
-        resp(res, response, code, next)
-    })
+router.get('/redis', async (req, res) => {
+    res.send(await fetchToDos(req.query.completed));
 });
 
 
